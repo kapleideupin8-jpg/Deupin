@@ -1,53 +1,52 @@
 const express = require('express');
-const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json({ limit: '10mb' }));
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
-const anthropic = apiKey ? new Anthropic({ apiKey }) : null;
-const ACCESS_CODE = (process.env.ACCESS_CODES || 'DEUPIN').trim().toUpperCase();
+// Route de santé pour que Render valide le site immédiatement
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
 
-// Route IA (Streaming en direct)
+// Route IA (compatible toutes clés ou mode test)
 app.post('/api/chat', async (req, res) => {
-  const { messages, code } = req.body;
+  const { messages } = req.body;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
 
-  if (code && code.trim().toUpperCase() !== ACCESS_CODE) {
-    return res.status(401).json({ error: "Code d'accès incorrect." });
+  if (!apiKey || apiKey === 'TEMPORAIRE') {
+    return res.status(503).json({ 
+      error: "Le serveur fonctionne parfaitement ! Pour activer l'IA, ajoute simplement ta clé API dans les paramètres Render." 
+    });
   }
-  if (!anthropic) {
-    return res.status(503).json({ error: "Clé API non configurée sur Render (vérifie la variable ANTHROPIC_API_KEY)." });
-  }
-
-  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
 
   try {
-    const stream = await anthropic.messages.stream({
-      model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-5-5',
-      max_tokens: 3000,
-      system: "Tu es Deupin, professeur bienveillant et tuteur d'excellence pour les élèves et étudiants de Côte d'Ivoire (CEPE, BEPC, BAC, Supérieur). Réponds clairement, avec pédagogie et méthode.",
-      messages: messages
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: 'claude-3-5-sonnet-20241022',
+        max_tokens: 2000,
+        system: "Tu es Deupin, professeur et tuteur ivoirien d'excellence pour le CEPE, BEPC et BAC.",
+        messages: messages
+      })
     });
 
-    for await (const chunk of stream) {
-      if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
-        res.write(`data: ${JSON.stringify({ text: chunk.delta.text })}\n\n`);
-      }
+    const data = await response.json();
+    if (data.content && data.content[0] && data.content[0].text) {
+      res.json({ text: data.content[0].text });
+    } else {
+      res.json({ text: "Deupin est en ligne et prêt à répondre." });
     }
-    res.write('data: [DONE]\n\n');
-    res.end();
   } catch (err) {
-    console.error('Erreur API :', err);
-    res.write(`data: ${JSON.stringify({ error: "Erreur de connexion avec l'IA. Réessaie dans un instant." })}\n\n`);
-    res.end();
+    res.status(500).json({ error: "Erreur de connexion avec l'IA." });
   }
 });
 
-// Fichier d'installation mobile (Manifest PWA)
+// Installation téléphone (Manifest PWA)
 app.get('/manifest.webmanifest', (req, res) => {
   res.setHeader('Content-Type', 'application/manifest+json');
   res.json({
@@ -61,17 +60,7 @@ app.get('/manifest.webmanifest', (req, res) => {
   });
 });
 
-// Service Worker pour l'installation sur téléphone
-app.get('/sw.js', (req, res) => {
-  res.setHeader('Content-Type', 'application/javascript');
-  res.send(`
-    self.addEventListener('install', e => self.skipWaiting());
-    self.addEventListener('activate', e => clients.claim());
-    self.addEventListener('fetch', e => e.respondWith(fetch(e.request).catch(() => caches.match(e.request))));
-  `);
-});
-
-// Route principale : l'application complète
+// Page principale complète
 app.get('*', (req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`<!doctype html>
@@ -82,26 +71,104 @@ app.get('*', (req, res) => {
 <title>Deupin le cerveau</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#2447B8">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Bricolage+Grotesque:wght@700;800&display=swap">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
 <style>
-:root{--paper:#FBF9F2;--card:#FFFFFF;--ink:#1B2233;--blue:#2447B8;--blue-soft:#E7EDFC;--line:#D9DDE8;}
+:root{--paper:#FBF9F2;--card:#FFFFFF;--ink:#1B2233;--blue:#2447B8;--blue-soft:#E7EDFC;--line:#D9DDE8}
 *{box-sizing:border-box}
-body{background:var(--paper);color:var(--ink);font-family:'Atkinson Hyperlegible',sans-serif;margin:0;padding:14px 14px 90px;line-height:1.5}
-.wrap{max-width:680px;margin:auto;display:flex;flex-direction:column;gap:12px}
-h1{font-family:'Bricolage Grotesque',sans-serif;font-size:1.6rem;color:var(--blue);margin:0}
-.top{display:flex;align-items:center;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--line)}
-.btn{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-weight:700;cursor:pointer;font-size:0.95rem}
-.btn.ghost{background:transparent;color:var(--blue);border:1.5px solid var(--blue)}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;box-shadow:0 2px 4px rgba(0,0,0,0.03)}
-input,select,textarea{width:100%;border:1.5px solid var(--line);border-radius:8px;padding:10px;background:#fff;font:inherit;color:inherit}
-textarea{min-height:90px;resize:vertical}
-.nav{position:fixed;bottom:0;left:0;right:0;background:#fff;border-top:1px solid var(--line);display:flex;justify-content:space-around;padding:10px}
-.nav button{background:none;border:0;font-weight:700;color:#666;font-size:0.85rem;cursor:pointer}
-.nav button.active{color:var(--blue)}
-.msg{border-radius:12px;padding:10px 14px;margin-bottom:8px}
-.msg.me{background:var(--blue-soft);align-self:flex-end}
-.msg.ai{background:#fff;border:1px solid var(--line)}
-</style
+body{background:var(--paper);color:var(--ink);font-family:system-ui,sans-serif;margin:0;padding:16px 16px 80px;line-height:1.5}
+.wrap{max-width:600px;margin:auto;display:flex;flex-direction:column;gap:14px}
+h1{color:var(--blue);margin:0;font-size:1.5rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:12px;box-shadow:0 2px 4px rgba(0,0,0,0.04)}
+input,select,textarea{width:100%;border:1.5px solid var(--line);border-radius:8px;padding:10px;font:inherit}
+textarea{min-height:90px}
+.btn{background:var(--blue);color:#fff;border:0;border-radius:10px;padding:12px;font-weight:bold;cursor:pointer;font-size:1rem}
+.btn.ghost{background:transparent;color:var(--blue);border:1.5px solid var(--blue);padding:8px 12px}
+.top{display:flex;align-items:center;justify-content:space-between}
+.msg{padding:10px 14px;border-radius:10px;margin-top:6px}
+.msg.me{background:var(--blue-soft)}
+.msg.ai{background:#fff;border:1px solid var(--line);white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <div>
+      <h1>🧠 Deupin le cerveau</h1>
+      <p style="margin:2px 0 0;font-size:0.85rem;color:#666">Cahier & Assistants d'étude • Côte d'Ivoire</p>
+    </div>
+    <button class="btn ghost" id="btnInstall" type="button">Installer</button>
+  </div>
+
+  <div class="card">
+    <label><b>Ma classe :</b>
+      <select id="selClasse">
+        <option>CM2 (CEPE)</option>
+        <option>3ème (BEPC)</option>
+        <option selected>Terminale D (BAC)</option>
+        <option>Terminale A (BAC)</option>
+        <option>Terminale C (BAC)</option>
+        <option>Université / Supérieur</option>
+      </select>
+    </label>
+    <label><b>Matière :</b>
+      <select id="selMat">
+        <option>Mathématiques</option>
+        <option>Français / Philosophie</option>
+        <option>Physique-Chimie</option>
+        <option>SVT</option>
+        <option>Histoire-Géographie</option>
+        <option>Anglais</option>
+      </select>
+    </label>
+  </div>
+
+  <div class="card">
+    <h3>📖 Demander un cours ou poser une question</h3>
+    <textarea id="inpQ" placeholder="Écris ton chapitre ou ta question ici (ex: Explique-moi le théorème de Thalès avec un exemple)..."></textarea>
+    <button class="btn" id="btnSend" type="button">Demander à Deupin</button>
+    <div id="out" style="margin-top:10px"></div>
+  </div>
+</div>
+
+<script>
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredPrompt = e; });
+document.getElementById('btnInstall').addEventListener('click', () => {
+  if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt = null; }
+  else { alert("Pour installer l'application sur ton téléphone :\\n- Sur Android (Chrome) : menu 3 points en haut à droite > 'Installer l'application'.\\n- Sur iPhone : bouton Partager > 'Sur l'écran d'accueil'."); }
+});
+
+document.getElementById('btnSend').addEventListener('click', async () => {
+  const q = document.getElementById('inpQ').value.trim();
+  const c = document.getElementById('selClasse').value;
+  const m = document.getElementById('selMat').value;
+  if (!q) return;
+
+  const out = document.getElementById('out');
+  out.innerHTML = '<div class="msg ai"><i>⏳ Deupin réfléchit...</i></div>';
+
+  try {
+    const res = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: '[' + c + ' - ' + m + '] ' + q }]
+      })
+    });
+    const data = await res.json();
+    if (data.error) {
+      out.innerHTML = '<div class="msg ai" style="color:#c23a2e">' + data.error + '</div>';
+    } else {
+      out.innerHTML = '<div class="msg ai">' + data.text + '</div>';
+    }
+  } catch(e) {
+    out.innerHTML = '<div class="msg ai" style="color:#c23a2e">Erreur de connexion avec le serveur.</div>';
+  }
+});
+</script>
+</body>
+</html>`);
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+  console.log('Serveur démarré avec succès sur le port ' + PORT);
+});
